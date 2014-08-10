@@ -134,18 +134,17 @@ class EpubCreator (object):
         self._set['pub_date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             path = self._set['cover']
-            if not os.path.isfile(path):
-                logging.debug("Cover path invalid '%s'; relative to bookdir?" %
-                              path)
-                path = pjoin(self._set['bookdir'], path)
-                if os.path.isfile(path):
-                    logging.debug("Cover path is relative; New path: '%s'" %
-                                  path)
-                    self._set['cover'] = path
-                else:
-                    logging.warn("Cover path '%s' is invalid -> remove key" %
-                                 self._set['cover'])
-                    del self._set['cover']
+            if not os.path.isabs(path):
+                new_path = pjoin(self._set['bookdir'], path)
+                logging.debug("Cover path assumed relative to bookdir '%s' -> '%s'" %
+                              (path, new_path))
+                path = new_path
+            if os.path.isfile(path):
+                self._set['cover'] = path
+            else: # Path is invalid
+                logging.warn("Cover path '%s' is invalid -> remove key" %
+                             self._set['cover'])
+                del self._set['cover']
         except KeyError:
             pass
         try:

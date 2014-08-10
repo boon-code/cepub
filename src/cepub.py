@@ -14,7 +14,7 @@ from os.path import join as pjoin, splitext
 
 __author__ = 'Manuel Huber'
 __copyright__ = "Copyright (c) 2014 Manuel Huber."
-__version__ = '0.9b'
+__version__ = '1.0'
 __docformat__ = "restructuredtext en"
 
 _DEFAULT_LOG_FORMAT = "%(name)s : %(threadName)s : %(levelname)s \
@@ -252,6 +252,8 @@ def create_epub_main (settings_file, options):
     finally:
         logging.debug("Clean up temporary directory")
         creator.cleanup()
+        if options.wait:
+            raw_input("Press <ENTER> to exit")
 
 
 def main (argv):
@@ -274,6 +276,12 @@ def main (argv):
                       dest="interactive", default=True,
                       help="Don't use interactive mode"
     )
+    parser.add_option("--wait",
+                      action="store_true",
+                      default=False,
+                      dest="wait",
+                      help="Wait for user to press enter when finished"
+    )
     parser.set_defaults(version=False, verb_level=logging.INFO)
 
     options, args = parser.parse_args(argv)
@@ -284,6 +292,10 @@ def main (argv):
         os.path.basename(sys.argv[0]),
         datetime.now().isoformat())
     )
+
+    if (not options.interactive) and options.wait:
+        logging.warn("Wait is disabled in non-interactive mode!")
+        options.wait = False
 
     if len(args) != 1:
         parser.error("Missing positional argument <settings_file>!")

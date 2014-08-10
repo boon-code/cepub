@@ -14,7 +14,7 @@ from os.path import join as pjoin, splitext
 
 __author__ = 'Manuel Huber'
 __copyright__ = "Copyright (c) 2014 Manuel Huber."
-__version__ = '1.0'
+__version__ = '1.1'
 __docformat__ = "restructuredtext en"
 
 _DEFAULT_LOG_FORMAT = "%(name)s : %(threadName)s : %(levelname)s \
@@ -53,11 +53,16 @@ class EpubCreator (object):
         self._uno_p = None
         self._tmpdir = None
         self._set = None
+        self._disable_uno_restart = False
         try:
             self._interactive = options.interactive
         except (AttributeError, KeyError):
             logging.warn("Disable interactive mode (option doesn't exist)")
             self._interactive = False
+        try:
+            self._disable_uno_restart = options.disable_uno_restart
+        except (AttributeError, KeyError):
+            pass
 
     def _conversion_test (self):
         self._start_uno()
@@ -69,6 +74,9 @@ class EpubCreator (object):
                                   cwd=self._tmpdir)
         test_p.communicate()
         if test_p.returncode != 0:
+            if self._disable_uno_restart:
+                logging.error("Test conversion failed -> abort")
+                raise EpubConversionError()
             logging.debug("Test conversion failed -> killing soffice.bin...")
             self._kill_soffice()
         else:
@@ -116,6 +124,9 @@ class EpubCreator (object):
         self._set['basename'] = bname
 
     def _start_uno (self, warn=True):
+        if self._disable_uno_restart:
+            logging.debug("Start/Stop of UNO server is disabled")
+            return
         self._stop_uno(warn=warn)
         logging.debug("Starting UNO server")
         self._uno_p = subprocess.Popen([_UNOCONV, "--listener"])
@@ -214,6 +225,9 @@ class EpubCreator (object):
         shutil.copy(pjoin(self._tmpdir, epub_name), outfile)
 
     def _stop_uno (self, warn=False):
+        if self._disable_uno_restart:
+            logging.debug("Start/Stop of UNO server is disabled")
+            return
         if self._uno_p is not None:
             if self._uno_p.poll() is None:
                 if warn:
@@ -280,6 +294,10 @@ def main (argv):
                       default=False,
                       dest="wait",
                       help="Wait for user to press enter when finished"
+    )
+    parser.add_option("--disable-uno-restart", action="store_true",
+                      dest="disable_uno_restart", default=False,
+                      help="Disables starting and stopping of unoconv server"
     )
     parser.set_defaults(version=False, verb_level=logging.INFO)
 

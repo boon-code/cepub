@@ -3,6 +3,7 @@
 
 import sys
 import os
+import re
 import json
 import shutil
 import logging
@@ -22,6 +23,7 @@ _DEFAULT_LOG_FORMAT = "%(name)s : %(threadName)s : %(levelname)s \
 
 _REQUIRED_ELEMENTS = ("title", "bookdir", "filename", "outname",
                       "authors")
+_OPTIONAL_ELEMENTS = ("chapter-regex",)
 _UNOCONV = 'unoconv'
 
 _EBOOK_CONVERT = 'ebook-convert'
@@ -178,6 +180,35 @@ class EpubCreator (object):
         if use_bookdir:
             self._set['outdir'] = self._set['bookdir']
 
+    def _opt_replace_line (self, data, rx):
+        parts = list()
+        pos = 0
+        for i in rx.finditer(data):
+            parts.append(data[pos:i.start()])
+            rep = '<%s class="chapter">%s</%s>' % i.groups()
+            logging.debug("Found chapter: '%s'" % i.group(2))
+            parts.append(rep)
+            pos = i.end()
+        parts.append(data[pos:])
+        ndata = "".join(parts)
+        return ndata
+
+    def _opt_xhtml_transform (self, xhtml_path):
+        try:
+            rx = re.compile(self._set['chapter-regex'])
+            tmp_path = xhtml_path + ".tmp"
+            with open(tmp_path, 'w') as fout:
+                with open(xhtml_path, 'r') as fin:
+                    data = self._opt_replace_line(fin.read(), rx)
+                    fout.write(data)
+            logging.debug("Rewriting xhtml including chapter marks")
+            os.rename(tmp_path, xhtml_path)
+        except re.error as e:
+            logging.warn("Skip invalid chapter-regex option '%s'" %
+                         self._set['chapter-regex'])
+        except KeyError as e:
+            logging.debug("No 'chapter-regex' option.")
+
     def _create_xhtml (self):
         logging.debug("Start converting %s to HTML..." %
                       self._set['basename'])
@@ -191,8 +222,9 @@ class EpubCreator (object):
         dstname = "%s.%s" % (self._set['outname'], 'xhtml')
         logging.debug("Rename %s to %s for further processing..." %
                       (srcname, dstname))
-        os.rename(pjoin(self._tmpdir, srcname),
-                  pjoin(self._tmpdir, dstname))
+        dstpath = pjoin(self._tmpdir, dstname)
+        os.rename(pjoin(self._tmpdir, srcname), dstpath)
+        self._opt_xhtml_transform(dstpath)
 
     def _xhtml_to_epub (self):
         epub_name = "%s.epub" % self._set['outname']

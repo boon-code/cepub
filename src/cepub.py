@@ -3,6 +3,7 @@
 
 import sys
 import os
+import re
 import json
 import shutil
 import logging
@@ -14,7 +15,7 @@ from os.path import join as pjoin, splitext
 
 __author__ = 'Manuel Huber'
 __copyright__ = "Copyright (c) 2014 Manuel Huber."
-__version__ = '1.0'
+__version__ = '1.1'
 __docformat__ = "restructuredtext en"
 
 _DEFAULT_LOG_FORMAT = "%(name)s : %(threadName)s : %(levelname)s \
@@ -22,6 +23,7 @@ _DEFAULT_LOG_FORMAT = "%(name)s : %(threadName)s : %(levelname)s \
 
 _REQUIRED_ELEMENTS = ("title", "bookdir", "filename", "outname",
                       "authors")
+_OPTIONAL_ELEMENTS = ("chapter-regex",)
 _UNOCONV = 'unoconv'
 
 _EBOOK_CONVERT = 'ebook-convert'
@@ -53,11 +55,16 @@ class EpubCreator (object):
         self._uno_p = None
         self._tmpdir = None
         self._set = None
+        self._disable_uno_restart = False
         try:
             self._interactive = options.interactive
         except (AttributeError, KeyError):
             logging.warn("Disable interactive mode (option doesn't exist)")
             self._interactive = False
+        try:
+            self._disable_uno_restart = options.disable_uno_restart
+        except (AttributeError, KeyError):
+            pass
 
     def _conversion_test (self):
         self._start_uno()
@@ -69,6 +76,9 @@ class EpubCreator (object):
                                   cwd=self._tmpdir)
         test_p.communicate()
         if test_p.returncode != 0:
+            if self._disable_uno_restart:
+                logging.error("Test conversion failed -> abort")
+                raise EpubConversionError()
             logging.debug("Test conversion failed -> killing soffice.bin...")
             self._kill_soffice()
         else:
@@ -116,6 +126,9 @@ class EpubCreator (object):
         self._set['basename'] = bname
 
     def _start_uno (self, warn=True):
+        if self._disable_uno_restart:
+            logging.debug("Start/Stop of UNO server is disabled")
+            return
         self._stop_uno(warn=warn)
         logging.debug("Starting UNO server")
         self._uno_p = subprocess.Popen([_UNOCONV, "--listener"])
@@ -134,18 +147,17 @@ class EpubCreator (object):
         self._set['pub_date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             path = self._set['cover']
-            if not os.path.isfile(path):
-                logging.debug("Cover path invalid '%s'; relative to bookdir?" %
-                              path)
-                path = pjoin(self._set['bookdir'], path)
-                if os.path.isfile(path):
-                    logging.debug("Cover path is relative; New path: '%s'" %
-                                  path)
-                    self._set['cover'] = path
-                else:
-                    logging.warn("Cover path '%s' is invalid -> remove key" %
-                                 self._set['cover'])
-                    del self._set['cover']
+            if not os.path.isabs(path):
+                new_path = pjoin(self._set['bookdir'], path)
+                logging.debug("Cover path assumed relative to bookdir '%s' -> '%s'" %
+                              (path, new_path))
+                path = new_path
+            if os.path.isfile(path):
+                self._set['cover'] = path
+            else: # Path is invalid
+                logging.warn("Cover path '%s' is invalid -> remove key" %
+                             self._set['cover'])
+                del self._set['cover']
         except KeyError:
             pass
         try:
@@ -168,6 +180,35 @@ class EpubCreator (object):
         if use_bookdir:
             self._set['outdir'] = self._set['bookdir']
 
+    def _opt_replace_line (self, data, rx):
+        parts = list()
+        pos = 0
+        for i in rx.finditer(data):
+            parts.append(data[pos:i.start()])
+            rep = '<%s class="chapter">%s</%s>' % i.groups()
+            logging.debug("Found chapter: '%s'" % i.group(2))
+            parts.append(rep)
+            pos = i.end()
+        parts.append(data[pos:])
+        ndata = "".join(parts)
+        return ndata
+
+    def _opt_xhtml_transform (self, xhtml_path):
+        try:
+            rx = re.compile(self._set['chapter-regex'])
+            tmp_path = xhtml_path + ".tmp"
+            with open(tmp_path, 'w') as fout:
+                with open(xhtml_path, 'r') as fin:
+                    data = self._opt_replace_line(fin.read(), rx)
+                    fout.write(data)
+            logging.debug("Rewriting xhtml including chapter marks")
+            os.rename(tmp_path, xhtml_path)
+        except re.error as e:
+            logging.warn("Skip invalid chapter-regex option '%s'" %
+                         self._set['chapter-regex'])
+        except KeyError as e:
+            logging.debug("No 'chapter-regex' option.")
+
     def _create_xhtml (self):
         logging.debug("Start converting %s to HTML..." %
                       self._set['basename'])
@@ -181,8 +222,9 @@ class EpubCreator (object):
         dstname = "%s.%s" % (self._set['outname'], 'xhtml')
         logging.debug("Rename %s to %s for further processing..." %
                       (srcname, dstname))
-        os.rename(pjoin(self._tmpdir, srcname),
-                  pjoin(self._tmpdir, dstname))
+        dstpath = pjoin(self._tmpdir, dstname)
+        os.rename(pjoin(self._tmpdir, srcname), dstpath)
+        self._opt_xhtml_transform(dstpath)
 
     def _xhtml_to_epub (self):
         epub_name = "%s.epub" % self._set['outname']
@@ -215,6 +257,9 @@ class EpubCreator (object):
         shutil.copy(pjoin(self._tmpdir, epub_name), outfile)
 
     def _stop_uno (self, warn=False):
+        if self._disable_uno_restart:
+            logging.debug("Start/Stop of UNO server is disabled")
+            return
         if self._uno_p is not None:
             if self._uno_p.poll() is None:
                 if warn:
@@ -281,6 +326,10 @@ def main (argv):
                       default=False,
                       dest="wait",
                       help="Wait for user to press enter when finished"
+    )
+    parser.add_option("--disable-uno-restart", action="store_true",
+                      dest="disable_uno_restart", default=False,
+                      help="Disables starting and stopping of unoconv server"
     )
     parser.set_defaults(version=False, verb_level=logging.INFO)
 
